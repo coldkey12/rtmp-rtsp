@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drone Live Stream</title>
+    <style>
+        :root {
+            --primary-color: #42a5f5;
+            --error-color: #ef5350;
+            --bg-color: #2d2d2d;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--bg-color);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            max-width: 1280px;
+            width: 100%;
+        }
+
+        .status-indicator {
+            padding: 8px 16px;
+            border-radius: 4px;
+            margin: 10px 0;
+            display: inline-block;
+            transition: opacity 0.3s;
+        }
+
+        .connected {
+            background-color: #4CAF50;
+        }
+
+        .disconnected {
+            background-color: var(--error-color);
+        }
+
+        #video-container {
+            position: relative;
+            width: 100%;
+            padding-top: 56.25%; /* 16:9 aspect ratio */
+            background: black;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+
+        #video-feed {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .controls {
+            margin: 20px 0;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+
+        .stats {
+            margin-top: 20px;
+            padding: 15px;
+            background: #1a1a1a;
+            border-radius: 4px;
+            width: 100%;
+            max-width: 400px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Live Drone Stream</h1>
+    <div class="status-indicator disconnected" id="status">Disconnected</div>
+
+    <div id="video-container">
+        <img id="video-feed" alt="Live video feed">
+    </div>
+
+    <div class="controls">
+        <button onclick="connectWebSocket()" id="connectBtn">Connect</button>
+        <button onclick="disconnectWebSocket()" id="disconnectBtn" disabled>Disconnect</button>
+    </div>
+
+    <div class="stats">
+        <h3>Stream Statistics</h3>
+        <div id="stats-content">
+            <p>FPS: <span id="fpsCounter">0</span></p>
+            <p>Latency: <span id="latencyCounter">0</span>ms</p>
+            <p>Frame Size: <span id="frameSize">0</span> KB</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    let websocket = null;
+    let frameTimes = [];
+    let latencyStart = 0;
+
+    const videoFeed = document.getElementById('video-feed');
+    const statusElement = document.getElementById('status');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+
+    // Performance counters
+    const fpsCounter = document.getElementById('fpsCounter');
+    const latencyCounter = document.getElementById('latencyCounter');
+    const frameSize = document.getElementById('frameSize');
+
+    function updateStatus(connected) {
+        statusElement.className = connected ? 'status-indicator connected' : 'status-indicator disconnected';
+        statusElement.textContent = connected ? 'Connected' : 'Disconnected';
+        connectBtn.disabled = connected;
+        disconnectBtn.disabled = !connected;
+    }
+
+    function calculateFPS() {
+        const now = performance.now();
+        frameTimes = frameTimes.filter(t => t > now - 1000);
+        fpsCounter.textContent = frameTimes.length;
+    }
+
+    function connectWebSocket() {
+        if (websocket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(websocket.readyState)) {
+            return;
+        }
+
+        websocket = new WebSocket(`ws://${window.location.hostname}:8080/stream`);
+        websocket.binaryType = 'arraybuffer';
+
+        let buffer = new Uint8Array();
+        let frameCount = 0;
+
+        websocket.onopen = () => {
+            updateStatus(true);
+            latencyStart = performance.now();
+            console.log('WebSocket connection established');
+        };
+
+        websocket.onmessage = (event) => {
+            // Update latency measurement
+            const latency = performance.now() - latencyStart;
+            latencyCounter.textContent = latency.toFixed(1);
+            latencyStart = performance.now();
+
+            // Update frame statistics
+            frameTimes.push(performance.now());
+            frameSize.textContent = (event.data.byteLength / 1024).toFixed(1);
+
+            // Process image data
+            const newData = new Uint8Array(event.data);
+            buffer = new Uint8Array([...buffer, ...newData]);
+
+            // Find JPEG markers (0xFFD8 and 0xFFD9)
+            let start = -1;
+            let end = -1;
+
+            for (let i = 0; i < buffer.length - 1; i++) {
+                if (buffer[i] === 0xFF && buffer[i+1] === 0xD8) {
+                    start = i;
+                }
+                if (buffer[i] === 0xFF && buffer[i+1] === 0xD9 && start !== -1) {
+                    end = i + 2;
+                    break;
+                }
+            }
+
+            if (start !== -1 && end !== -1) {
+                try {
+                    const jpegData = buffer.slice(start, end);
+                    const blob = new Blob([jpegData], { type: 'image/jpeg' });
+                    const url = URL.createObjectURL(blob);
+
+                    videoFeed.onload = () => {
+                        URL.revokeObjectURL(videoFeed.src);
+                        frameCount++;
+                        calculateFPS();
+                    };
+
+                    videoFeed.src = url;
+                    buffer = buffer.slice(end);
+                } catch (error) {
+                    console.error('Frame processing error:', error);
+                }
+            }
+        };
+
+        websocket.onclose = () => {
+            updateStatus(false);
+            buffer = new Uint8Array();
+            console.log('WebSocket connection closed');
+        };
+
+        websocket.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            updateStatus(false);
+        };
+    }
+
+    function disconnectWebSocket() {
+        if (websocket) {
+            websocket.close();
+        }
+        updateStatus(false);
+    }
+
+    // Auto-connect when page loads
+    window.addEventListener('load', () => {
+        connectWebSocket();
+        setInterval(calculateFPS, 1000);
+    });
+
+    // Handle window close
+    window.addEventListener('beforeunload', () => {
+        disconnectWebSocket();
+    });
+</script>
+</body>
+</html>

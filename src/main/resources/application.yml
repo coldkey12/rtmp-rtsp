@@ -1,0 +1,18 @@
+rtmp:
+  enabled: yes
+  address: :1935
+
+rtsp:
+  enabled: yes
+  address: :8554
+
+paths:
+  drone-stream:
+    # Ingest RTMP from the drone
+    source: rtmp://localhost/live/stream
+    sourceProtocol: rtmp
+    # Output as RTSP
+    sourceOnDemand: yes
+
+server:
+  port: 8080
