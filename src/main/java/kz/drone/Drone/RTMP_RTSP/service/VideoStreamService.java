@@ -12,49 +12,92 @@ import java.util.Arrays;
 public class VideoStreamService {
 
     private final VideoStreamHandler videoStreamHandler;
+    private Process currentProcess;
 
     public VideoStreamService(VideoStreamHandler videoStreamHandler) {
         this.videoStreamHandler = videoStreamHandler;
     }
 
     public void startStreamProcessing(String rtmpUrl) {
+        stopCurrentStream();
+
         new Thread(() -> {
             try {
-                Process process = new ProcessBuilder(
+                ProcessBuilder processBuilder = new ProcessBuilder(
                         "ffmpeg",
                         "-i", rtmpUrl,
-                        "-vf", "fps=15",
-                        "-f", "mjpeg",          // Changed from image2pipe
+                        "-vf", "fps=24",
+                        "-f", "mjpeg",
                         "-q:v", "2",
                         "-"
-                ).start();// Combine stdout/stderr
+                );
 
-                InputStream in = process.getInputStream();
-                ByteArrayOutputStream errorBuffer = new ByteArrayOutputStream();
+                currentProcess = processBuilder.start();
+                InputStream in = currentProcess.getInputStream();
+                InputStream err = currentProcess.getErrorStream();
 
-                // Capture FFmpeg output in a separate thread
+                // Read error stream
                 new Thread(() -> {
-                    byte[] buffer = new byte[1024];
-                    int bytesRead;
                     try {
-                        while ((bytesRead = in.read(buffer)) != -1) {
+                        ByteArrayOutputStream errorBuffer = new ByteArrayOutputStream();
+                        byte[] buffer = new byte[1024];
+                        int bytesRead;
+                        while ((bytesRead = err.read(buffer)) != -1) {
                             errorBuffer.write(buffer, 0, bytesRead);
-                            byte[] frame = Arrays.copyOf(buffer, bytesRead);
-                            videoStreamHandler.broadcast(frame);
                         }
+                        System.out.println("FFmpeg error output:\n" + errorBuffer.toString());
                     } catch (IOException e) {
-                        System.err.println("FFmpeg read error: " + e.getMessage());
+                        e.printStackTrace();
                     }
                 }).start();
 
-                // Wait for process exit and log errors
-                int exitCode = process.waitFor();
-                System.out.println("FFmpeg exited with code: " + exitCode);
-                System.out.println("FFmpeg output:\n" + errorBuffer.toString());
+                // Read video stream
+                ByteArrayOutputStream frameBuffer = new ByteArrayOutputStream();
+                byte[] buffer = new byte[1024];
+                int bytesRead;
+                while ((bytesRead = in.read(buffer)) != -1) {
+                    frameBuffer.write(buffer, 0, bytesRead);
 
-            } catch (IOException | InterruptedException e) {
+                    // Split MJPEG stream into individual frames
+                    byte[] frameData = frameBuffer.toByteArray();
+                    int start = indexOf(frameData, new byte[]{(byte)0xFF, (byte)0xD8});
+                    int end = indexOf(frameData, new byte[]{(byte)0xFF, (byte)0xD9});
+
+                    if (start != -1 && end != -1) {
+                        byte[] frame = Arrays.copyOfRange(frameData, start, end + 2);
+                        videoStreamHandler.broadcast(frame);
+                        frameBuffer.reset();
+                        frameBuffer.write(Arrays.copyOfRange(frameData, end + 2, frameData.length));
+                    }
+                }
+
+            } catch (IOException e) {
                 e.printStackTrace();
             }
         }).start();
+    }
+
+    private void stopCurrentStream() {
+        if (currentProcess != null && currentProcess.isAlive()) {
+            currentProcess.destroy();
+            try {
+                currentProcess.waitFor();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private int indexOf(byte[] array, byte[] target) {
+        outer:
+        for (int i = 0; i < array.length - target.length + 1; i++) {
+            for (int j = 0; j < target.length; j++) {
+                if (array[i + j] != target[j]) {
+                    continue outer;
+                }
+            }
+            return i;
+        }
+        return -1;
     }
 }

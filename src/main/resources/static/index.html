@@ -1,195 +1,272 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Drone Live Stream</title>
+    <title>Drone Tracking Dashboard</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
     <style>
-        :root {
-            --primary-color: #42a5f5;
-            --error-color: #ef5350;
-            --bg-color: #2d2d2d;
+        .leaflet-container {
+            background: #1a1a1a !important;
         }
-
-        body {
-            font-family: 'Arial', sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: var(--bg-color);
-            color: white;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-
-        .container {
-            max-width: 1280px;
-            width: 100%;
-        }
-
-        .status-indicator {
-            padding: 8px 16px;
-            border-radius: 4px;
-            margin: 10px 0;
-            display: inline-block;
-            transition: opacity 0.3s;
-        }
-
-        .connected {
-            background-color: #4CAF50;
-        }
-
-        .disconnected {
-            background-color: var(--error-color);
-        }
-
-        #video-container {
-            position: relative;
-            width: 100%;
-            padding-top: 56.25%; /* 16:9 aspect ratio */
-            background: black;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-        }
-
-        #video-feed {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-        }
-
-        .controls {
-            margin: 20px 0;
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-
-        button {
-            background-color: var(--primary-color);
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: opacity 0.2s;
-        }
-
-        button:hover {
-            opacity: 0.9;
-        }
-
-        button:disabled {
-            background-color: #666;
-            cursor: not-allowed;
-        }
-
-        .stats {
-            margin-top: 20px;
-            padding: 15px;
-            background: #1a1a1a;
-            border-radius: 4px;
-            width: 100%;
-            max-width: 400px;
+        .leaflet-control-attribution {
+            background: rgba(0,0,0,0.7) !important;
+            color: white !important;
         }
     </style>
 </head>
-<body>
-<div class="container">
-    <h1>Live Drone Stream</h1>
-    <div class="status-indicator disconnected" id="status">Disconnected</div>
-
-    <div id="video-container">
-        <img id="video-feed" alt="Live video feed">
+<body class="bg-gray-100 min-h-screen">
+<div class="container mx-auto p-6">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+        <div class="flex items-center gap-3">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
+            <h1 class="text-2xl font-bold text-gray-800">Drone Tracking Dashboard</h1>
+        </div>
+        <div class="flex items-center gap-4">
+            <div id="status" class="px-4 py-2 rounded-full text-sm font-medium bg-red-100 text-red-800">
+                Disconnected
+            </div>
+            <button onclick="connectWebSocket()" id="connectBtn"
+                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200">
+                Connect
+            </button>
+            <button onclick="disconnectWebSocket()" id="disconnectBtn" disabled
+                    class="px-4 py-2 bg-gray-400 text-white rounded-lg hover:bg-gray-500 transition-colors duration-200">
+                Disconnect
+            </button>
+        </div>
     </div>
 
-    <div class="controls">
-        <button onclick="connectWebSocket()" id="connectBtn">Connect</button>
-        <button onclick="disconnectWebSocket()" id="disconnectBtn" disabled>Disconnect</button>
-    </div>
+    <!-- Main Content Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Video Feed Card -->
+        <div class="bg-white rounded-xl shadow-lg p-4">
+            <h2 class="text-lg font-semibold mb-4 text-gray-700">Live Video Stream</h2>
+            <div class="aspect-video bg-gray-800 rounded-lg overflow-hidden relative">
+                <img id="video-feed" alt="Live video feed"
+                     class="w-full h-full object-contain animate-pulse">
+            </div>
+        </div>
 
-    <div class="stats">
-        <h3>Stream Statistics</h3>
-        <div id="stats-content">
-            <p>FPS: <span id="fpsCounter">0</span></p>
-            <p>Latency: <span id="latencyCounter">0</span>ms</p>
-            <p>Frame Size: <span id="frameSize">0</span> KB</p>
+        <!-- Leaflet Map Card -->
+        <div class="bg-white rounded-xl shadow-lg p-4">
+            <h2 class="text-lg font-semibold mb-4 text-gray-700">Live Position Tracking</h2>
+            <div id="map" class="aspect-video rounded-lg overflow-hidden z-0"></div>
+            <div class="mt-4 grid grid-cols-2 gap-2 text-sm">
+                <div class="bg-gray-50 p-2 rounded">
+                    <span class="text-gray-600">Latitude:</span>
+                    <span id="gps-lat" class="font-medium">0.0000</span>
+                </div>
+                <div class="bg-gray-50 p-2 rounded">
+                    <span class="text-gray-600">Longitude:</span>
+                    <span id="gps-lng" class="font-medium">0.0000</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistics Card -->
+        <div class="lg:col-span-2 bg-white rounded-xl shadow-lg p-4">
+            <h2 class="text-lg font-semibold mb-4 text-gray-700">Flight Metrics</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-blue-50 p-4 rounded-lg">
+                    <p class="text-sm text-gray-600 mb-1">Frames per Second</p>
+                    <p class="text-2xl font-bold text-blue-600"><span id="fpsCounter">0</span> FPS</p>
+                </div>
+                <div class="bg-green-50 p-4 rounded-lg">
+                    <p class="text-sm text-gray-600 mb-1">Stream Latency</p>
+                    <p class="text-2xl font-bold text-green-600"><span id="latencyCounter">0</span>ms</p>
+                </div>
+                <div class="bg-purple-50 p-4 rounded-lg">
+                    <p class="text-sm text-gray-600 mb-1">Frame Size</p>
+                    <p class="text-2xl font-bold text-purple-600"><span id="frameSize">0</span>KB</p>
+                </div>
+                <div class="bg-yellow-50 p-4 rounded-lg">
+                    <p class="text-sm text-gray-600 mb-1">Altitude</p>
+                    <p class="text-2xl font-bold text-yellow-600"><span id="altitude">0</span>m</p>
+                </div>
+            </div>
         </div>
     </div>
 </div>
 
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
 <script>
+    // Leaflet Map Initialization
+    let map = null;
+    let marker = null;
+
+    function initMap(lat = 34.0522, lng = -118.2437) {
+        // Destroy existing map instance
+        if (map) {
+            map.remove();
+            map = null;
+            marker = null;
+        }
+
+        // Create new map instance
+        map = L.map('map', {
+            preferCanvas: true,
+            zoomControl: false
+        }).setView([lat, lng], 14);
+
+        // Add tile layer
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 18
+        }).addTo(map);
+
+        // Initialize marker
+        marker = L.marker([lat, lng], {
+            icon: L.icon({
+                iconUrl: 'https://cdn-icons-png.flaticon.com/512/67/67994.png',
+                iconSize: [40, 40],
+                iconAnchor: [20, 40]
+            }),
+            draggable: false
+        }).addTo(map);
+
+        // Add zoom control
+        L.control.zoom({
+            position: 'topright'
+        }).addTo(map);
+    }
+
+    // Initialize map on load
+    window.addEventListener('load', initMap);
+
+    // WebSocket and Video Handling
     let websocket = null;
+    let gpsWebsocket = null;
     let frameTimes = [];
     let latencyStart = 0;
-
     const videoFeed = document.getElementById('video-feed');
     const statusElement = document.getElementById('status');
-    const connectBtn = document.getElementById('connectBtn');
-    const disconnectBtn = document.getElementById('disconnectBtn');
-
-    // Performance counters
-    const fpsCounter = document.getElementById('fpsCounter');
-    const latencyCounter = document.getElementById('latencyCounter');
-    const frameSize = document.getElementById('frameSize');
 
     function updateStatus(connected) {
-        statusElement.className = connected ? 'status-indicator connected' : 'status-indicator disconnected';
+        statusElement.className = connected
+            ? 'px-4 py-2 rounded-full text-sm font-medium bg-green-100 text-green-800'
+            : 'px-4 py-2 rounded-full text-sm font-medium bg-red-100 text-red-800';
         statusElement.textContent = connected ? 'Connected' : 'Disconnected';
-        connectBtn.disabled = connected;
-        disconnectBtn.disabled = !connected;
+        document.getElementById('connectBtn').disabled = connected;
+        document.getElementById('disconnectBtn').disabled = !connected;
     }
 
     function calculateFPS() {
         const now = performance.now();
         frameTimes = frameTimes.filter(t => t > now - 1000);
-        fpsCounter.textContent = frameTimes.length;
+        document.getElementById('fpsCounter').textContent = frameTimes.length;
     }
 
     function connectWebSocket() {
-        if (websocket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(websocket.readyState)) {
-            return;
-        }
+        if (websocket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(websocket.readyState)) return;
 
+        // Video WebSocket
         websocket = new WebSocket(`ws://${window.location.hostname}:8080/stream`);
         websocket.binaryType = 'arraybuffer';
 
-        let buffer = new Uint8Array();
-        let frameCount = 0;
+        // GPS WebSocket
+        gpsWebsocket = new WebSocket(`ws://${window.location.hostname}:8080/gps`);
 
+        // Add connection logging
+        gpsWebsocket.addEventListener('open', () => {
+            console.log('GPS WebSocket connected');
+        });
+
+        gpsWebsocket.addEventListener('error', (error) => {
+            console.error('GPS WebSocket error:', error);
+        });
+
+        // Modified message handler with validation
+        gpsWebsocket.onmessage = (event) => {
+            try {
+                const gpsData = JSON.parse(event.data);
+                console.log('Received GPS data:', gpsData);
+
+                // Validate coordinates
+                if (typeof gpsData.latitude !== 'number' || typeof gpsData.longitude !== 'number') {
+                    throw new Error('Invalid coordinate format');
+                }
+
+                // Update UI elements
+                document.getElementById('gps-lat').textContent = gpsData.latitude.toFixed(6);
+                document.getElementById('gps-lng').textContent = gpsData.longitude.toFixed(6);
+                document.getElementById('altitude').textContent =
+                    (gpsData.altitude || 0).toFixed(1);
+
+                // Create marker if not exists
+                if (!marker) {
+                    marker = L.marker([gpsData.latitude, gpsData.longitude], {
+                        icon: L.icon({
+                            iconUrl: 'https://cdn-icons-png.flaticon.com/512/67/67994.png',
+                            iconSize: [40, 40],
+                            iconAnchor: [20, 40]
+                        })
+                    }).addTo(map);
+                }
+
+                // Update map position
+                const newLatLng = L.latLng(gpsData.latitude, gpsData.longitude);
+                marker.setLatLng(newLatLng);
+                map.panTo(newLatLng);
+
+            } catch (error) {
+                console.error('GPS data processing error:', error, 'Data:', event.data);
+            }
+        };
+
+        // Video WebSocket
+        websocket = new WebSocket(`ws://${window.location.hostname}:8080/stream`);
+        websocket.binaryType = 'arraybuffer';
+
+        // GPS WebSocket
+        gpsWebsocket = new WebSocket(`ws://${window.location.hostname}:8080/gps`);
+        gpsWebsocket.onmessage = (event) => {
+            const gpsData = JSON.parse(event.data);
+
+            // Update map marker
+            const newLatLng = L.latLng(gpsData.latitude, gpsData.longitude);
+            marker.setLatLng(newLatLng);
+            map.panTo(newLatLng);
+
+            // Update UI
+            document.getElementById('gps-lat').textContent = gpsData.latitude.toFixed(6);
+            document.getElementById('gps-lng').textContent = gpsData.longitude.toFixed(6);
+            document.getElementById('altitude').textContent = gpsData.altitude?.toFixed(1) || '0';
+        };
+
+        let buffer = new Uint8Array();
         websocket.onopen = () => {
             updateStatus(true);
             latencyStart = performance.now();
-            console.log('WebSocket connection established');
+            videoFeed.classList.remove('animate-pulse');
         };
 
         websocket.onmessage = (event) => {
-            // Update latency measurement
             const latency = performance.now() - latencyStart;
-            latencyCounter.textContent = latency.toFixed(1);
+            document.getElementById('latencyCounter').textContent = latency.toFixed(1);
             latencyStart = performance.now();
 
-            // Update frame statistics
             frameTimes.push(performance.now());
-            frameSize.textContent = (event.data.byteLength / 1024).toFixed(1);
+            document.getElementById('frameSize').textContent = (event.data.byteLength / 1024).toFixed(1);
 
-            // Process image data
             const newData = new Uint8Array(event.data);
             buffer = new Uint8Array([...buffer, ...newData]);
 
-            // Find JPEG markers (0xFFD8 and 0xFFD9)
             let start = -1;
             let end = -1;
-
             for (let i = 0; i < buffer.length - 1; i++) {
-                if (buffer[i] === 0xFF && buffer[i+1] === 0xD8) {
-                    start = i;
-                }
+                if (buffer[i] === 0xFF && buffer[i+1] === 0xD8) start = i;
                 if (buffer[i] === 0xFF && buffer[i+1] === 0xD9 && start !== -1) {
                     end = i + 2;
                     break;
@@ -200,16 +277,9 @@
                 try {
                     const jpegData = buffer.slice(start, end);
                     const blob = new Blob([jpegData], { type: 'image/jpeg' });
-                    const url = URL.createObjectURL(blob);
-
-                    videoFeed.onload = () => {
-                        URL.revokeObjectURL(videoFeed.src);
-                        frameCount++;
-                        calculateFPS();
-                    };
-
-                    videoFeed.src = url;
+                    videoFeed.src = URL.createObjectURL(blob);
                     buffer = buffer.slice(end);
+                    videoFeed.onload = () => URL.revokeObjectURL(videoFeed.src);
                 } catch (error) {
                     console.error('Frame processing error:', error);
                 }
@@ -219,7 +289,7 @@
         websocket.onclose = () => {
             updateStatus(false);
             buffer = new Uint8Array();
-            console.log('WebSocket connection closed');
+            videoFeed.classList.add('animate-pulse');
         };
 
         websocket.onerror = (error) => {
@@ -229,22 +299,18 @@
     }
 
     function disconnectWebSocket() {
-        if (websocket) {
-            websocket.close();
-        }
+        if (websocket) websocket.close();
+        if (gpsWebsocket) gpsWebsocket.close();
         updateStatus(false);
     }
 
-    // Auto-connect when page loads
+    // Auto-connect and setup
     window.addEventListener('load', () => {
         connectWebSocket();
         setInterval(calculateFPS, 1000);
     });
 
-    // Handle window close
-    window.addEventListener('beforeunload', () => {
-        disconnectWebSocket();
-    });
+    window.addEventListener('beforeunload', () => disconnectWebSocket());
 </script>
 </body>
 </html>
