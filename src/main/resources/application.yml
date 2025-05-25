@@ -13,3 +13,11 @@ paths:
     sourceProtocol: rtmp
     # Output as RTSP
     sourceOnDemand: yes
+
+spring:
+  datasource:
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
