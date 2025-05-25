@@ -13,6 +13,3 @@ paths:
     sourceProtocol: rtmp
     # Output as RTSP
     sourceOnDemand: yes
-
-server:
-  port: 8080
